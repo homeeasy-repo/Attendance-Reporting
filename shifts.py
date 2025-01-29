@@ -100,11 +100,14 @@ def fetch_shifts(start_date, end_date):
         'dates': f"{start_date}/{end_date}"
     }
     headers = {
-        "Authorization": st.secrets["SLING_API_BASE"]
+        "Authorization": st.secrets["SLING_API_KEY"]
     }
     
     try:
         response = requests.get(url, headers=headers, params=params)
+        if response.status_code == 400:
+            st.error(f"Error fetching shifts: Invalid date range or format. Please check your dates.")
+            return []
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
