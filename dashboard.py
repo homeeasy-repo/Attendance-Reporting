@@ -1,87 +1,80 @@
 import streamlit as st
-from Reporting import AttendanceAnalyzer
-from datetime import datetime, timedelta
 
 st.set_page_config(
-    page_title="Attendance Dashboard",
-    page_icon="📊",
+    page_title="Homeeasy Sales Dashboard",
     layout="wide"
 )
 
-st.title("📊 Attendance Analysis Dashboard")
+from Reporting import AttendanceAnalyzer
+import shifts
+import pandas as pd
 
-# Initialize the analyzer
-analyzer = AttendanceAnalyzer()
-
-# Add date range selector
-col1, col2 = st.columns(2)
-with col1:
-    start_date = st.date_input(
-        "Start Date",
-        value=datetime(2025, 1, 1).date(),
-        min_value=datetime(2024, 1, 1).date(),
-        max_value=datetime.now().date()
-    )
-with col2:
-    end_date = st.date_input(
-        "End Date",
-        value=datetime(2025, 1, 26).date(),
-        min_value=start_date,
-        max_value=datetime.now().date()
-    )
-
-# Update analyzer dates
-analyzer.start_date = datetime.combine(start_date, datetime.min.time())
-analyzer.end_date = datetime.combine(end_date, datetime.min.time())
-
-if st.button("Generate Report"):
-    with st.spinner("Analyzing attendance data..."):
-        try:
-            df = analyzer.analyze_attendance()
+def show_reporting():
+    st.title("Attendance Reporting Dashboard")
+    
+    analyzer = AttendanceAnalyzer()
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        start_date = st.date_input("Start Date", analyzer.start_date)
+    with col2:
+        end_date = st.date_input("End Date", analyzer.end_date)
+    
+    if st.button("Generate Report"):
+        with st.spinner("Analyzing attendance data..."):
+            analyzer.start_date = start_date
+            analyzer.end_date = end_date
             
-            if df.empty:
-                st.error("No attendance data found for the selected period.")
-            else:
-                # Display summary metrics
-                st.subheader("Summary Metrics")
-                metric_cols = st.columns(4)
-                
-                with metric_cols[0]:
-                    total_employees = len(df)
-                    st.metric("Total Employees", total_employees)
-                
-                with metric_cols[1]:
-                    avg_attendance = round(df['Days Present'].mean(), 1)
-                    st.metric("Avg Days Present", avg_attendance)
-                
-                with metric_cols[2]:
-                    total_lates = df['Late Arrivals'].sum()
-                    st.metric("Total Late Arrivals", total_lates)
-                
-                with metric_cols[3]:
-                    total_early_outs = df['Early Clock-outs'].sum()
-                    st.metric("Total Early Clock-outs", total_early_outs)
 
-                # Display detailed table
-                st.subheader("Detailed Attendance Report")
+            summary_df = analyzer.analyze_attendance()
+            
+            if not summary_df.empty:
+                st.success("Report generated successfully!")
+                
+
                 st.dataframe(
-                    df,
+                    summary_df,
                     use_container_width=True,
                     hide_index=True
                 )
-
-                # Download button for CSV
-                csv = df.to_csv(index=False).encode('utf-8')
+                
+                # Add download button
+                csv = summary_df.to_csv(index=False)
                 st.download_button(
-                    "Download Report as CSV",
+                    "Download Report",
                     csv,
                     "attendance_report.csv",
                     "text/csv",
                     key='download-csv'
                 )
+            else:
+                st.warning("No attendance data found for the selected date range.")
 
-        except Exception as e:
-            st.error(f"An error occurred: {str(e)}")
+def main():
+    try:
+        st.sidebar.image("homeeasylogo.png", width=200)
+    except:
+        st.sidebar.title("Homeeasy")
+    
+    page = st.sidebar.selectbox(
+        "Select Dashboard",
+        ["Shift Management", "Attendance Reporting"],
+        format_func=lambda x: f"📊 {x}" if x == "Attendance Reporting" else f"📅 {x}"
+    )
+    
+    if page == "Shift Management":
+        shifts.main()
+    else:
+        show_reporting()
+    
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### About")
+    st.sidebar.info(
+        """
+        This dashboard provides tools for managing employee shifts 
+        and monitoring attendance patterns.
+        """
+    )
 
-# if __name__ == "__main__":
-#     main() 
+if __name__ == "__main__":
+    main() 
