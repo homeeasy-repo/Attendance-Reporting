@@ -67,6 +67,7 @@ def main():
     else:
         show_reporting()
     
+    # Add footer with creator credit
     st.sidebar.markdown("---")
     st.sidebar.markdown("### About")
     st.sidebar.info(
@@ -74,6 +75,15 @@ def main():
         This dashboard provides tools for managing employee shifts 
         and monitoring attendance patterns.
         """
+    )
+    st.sidebar.markdown("---")
+    st.sidebar.markdown(
+        """
+        <div style='text-align: center; color: #888; padding: 10px;'>
+        Created by <span style='color: #4A90E2; font-weight: 500;'>Alisha Zahid</span>
+        </div>
+        """,
+        unsafe_allow_html=True
     )
 
 if __name__ == "__main__":
