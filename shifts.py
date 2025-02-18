@@ -50,7 +50,7 @@ def get_position_from_groups(group_ids, groups):
         if group_id in group_ids:
             return position_priority[group_id], group_id
     
-    return 'Sales Agent', 21678699  
+    return 'Sales Agent', 21678699
 
 def create_shift(user_id, position_id, start_date, selected_days, interval, shift_type):
     """Create shift for a user"""
@@ -68,19 +68,28 @@ def create_shift(user_id, position_id, start_date, selected_days, interval, shif
     until_str = f"{until_date.strftime('%Y-%m-%d')}T23:59:59.000Z"
     
     # Set shift times based on shift type (Pakistan time UTC+5)
-    if shift_type == "10-hour":
+    if shift_type == "8-hour":
+        # 8 PM PKT = 15:00 UTC
+        shift_start = "15:00:00.000"  # 8 PM PKT
+        # For 8-hour shift ending at 4 AM PKT next day = 23:00 UTC same day
+        shift_end = "23:00:00.000"    # 4 AM PKT next day
+        summary = "8-Hour Night Shift (8 PM - 4 AM PKT)"
+        # For 8-hour shift, end time is on the same UTC day
+        next_day = start_date
+    elif shift_type == "10-hour":
         # 10 PM PKT = 17:00 UTC
         shift_start = "17:00:00.000"  # 10 PM PKT
         shift_end = "03:00:00.000"    # 8 AM PKT next day
         summary = "10-Hour Night Shift (10 PM - 8 AM PKT)"
+        next_day = start_date + timedelta(days=1)
     else:  # 12-hour
         # 8 PM PKT = 15:00 UTC
         shift_start = "15:00:00.000"  # 8 PM PKT
         shift_end = "03:00:00.000"    # 8 AM PKT next day
         summary = "12-Hour Night Shift (8 PM - 8 AM PKT)"
+        next_day = start_date + timedelta(days=1)
     
-    # For night shift that ends next day
-    next_day = start_date + timedelta(days=1)
+    # Create shift start and end time strings
     shift_start_str = f"{start_date.strftime('%Y-%m-%d')}T{shift_start}Z"
     shift_end_str = f"{next_day.strftime('%Y-%m-%d')}T{shift_end}Z"
     
@@ -103,7 +112,10 @@ def create_shift(user_id, position_id, start_date, selected_days, interval, shif
     }]
     
     try:
+        # st.write("Sending shift data:", shift_data)  # Debug print
         response = requests.post(url, headers=headers, json=shift_data)
+        if response.status_code != 200:
+            st.error(f"API Response: {response.text}")  # Debug print
         response.raise_for_status()
         return True
     except requests.exceptions.RequestException as e:
@@ -122,14 +134,83 @@ def fetch_shifts(start_date, end_date):
     
     try:
         response = requests.get(url, headers=headers, params=params)
-        if response.status_code == 400:
-            st.error(f"Error fetching shifts: Invalid date range or format. Please check your dates.")
-            return []
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
         st.error(f"Error fetching shifts: {str(e)}")
         return []
+
+def process_shifts_view(shifts_data, start_date, end_date, users_data):
+    """Process shifts data and create a display table"""
+    # Create date range
+    date_range = pd.date_range(start=start_date, end=end_date)
+    
+    # Create user lookup dictionary
+    all_users = {}
+    if users_data and 'users' in users_data:
+        for user in users_data['users']:
+            # Skip AI Engineers, Head of People and Operations, and Mukund Chopra
+            position = get_position_from_groups(user['groupIds'], {})[0]
+            if (position not in ['AI Engineer', 'Head of People and Operations'] and
+                f"{user['legalName']} {user['lastname']}" != "Mukund Chopra"):
+                all_users[str(user['id'])] = {
+                    'name': f"{user['legalName']} {user['lastname']}",
+                    'shifts': {date.date(): [] for date in date_range}
+                }
+    
+    # Process each shift
+    for shift in shifts_data:
+        if 'user' in shift and shift['user']:
+            user_id = str(shift['user']['id'])
+            if user_id in all_users:
+                try:
+                    # Parse shift times
+                    dtstart = shift['dtstart']
+                    dtend = shift['dtend']
+                    shift_start = datetime.strptime(dtstart.split('+')[0], "%Y-%m-%dT%H:%M:%S")
+                    shift_end = datetime.strptime(dtend.split('+')[0], "%Y-%m-%dT%H:%M:%S")
+                    
+                    # Get all dates this shift covers
+                    shift_dates = set()
+                    
+                    # Add initial shift dates
+                    shift_dates.add(shift_start.date())
+                    if shift_end.date() != shift_start.date():
+                        shift_dates.add(shift_end.date())
+                    
+                    # Handle recurring shifts
+                    if 'rrule' in shift:
+                        rrule = shift['rrule']
+                        byday = rrule.get('byday', '').split(',')
+                        until = datetime.strptime(rrule['until'].split('+')[0], "%Y-%m-%dT%H:%M:%S")
+                        
+                        # Add all recurring dates
+                        current_date = shift_start.date()
+                        while current_date <= min(until.date(), end_date):
+                            weekday = current_date.strftime('%a').upper()[:2]
+                            if weekday in byday:
+                                shift_dates.add(current_date)
+                            current_date += timedelta(days=1)
+                    
+                    # Mark shifts in user's data
+                    for date in shift_dates:
+                        if date in all_users[user_id]['shifts']:
+                            all_users[user_id]['shifts'][date].append(shift.get('summary', 'Night Shift'))
+                
+                except Exception as e:
+                    st.error(f"Error processing shift for {all_users[user_id]['name']}: {str(e)}")
+    
+    # Create display rows
+    shift_rows = []
+    for user_id, user_data in all_users.items():
+        row = {'Employee': user_data['name']}
+        for date in date_range:
+            date_str = date.strftime("%Y-%m-%d")
+            has_shift = bool(user_data['shifts'][date.date()])
+            row[date_str] = "✅" if has_shift else "❌"
+        shift_rows.append(row)
+    
+    return pd.DataFrame(shift_rows), date_range
 
 def main():
     st.title("Shift Management Dashboard")
@@ -144,81 +225,16 @@ def main():
     shifts_data = fetch_shifts(start_view_date.strftime("%Y-%m-%d"), end_view_date.strftime("%Y-%m-%d"))
     users_data = fetch_users()
     
-    # Create a dictionary of all users first
-    all_users = {}
-    if users_data and 'users' in users_data:
-        for user in users_data['users']:
-            # Skip AI Engineers and Mukund Chopra
-            if ('groupIds' in user and 
-                get_position_from_groups(user['groupIds'], {})[0] != 'AI Engineer' and
-                f"{user['legalName']} {user['lastname']}" != "Mukund Chopra"):
-                all_users[user['id']] = {
-                    'name': f"{user['legalName']} {user['lastname']}",
-                    'shifts': {}
-                }
-    
-    # Process shifts data
-    if shifts_data:
-        date_range = pd.date_range(start=start_view_date, end=end_view_date)
+    if shifts_data and users_data:
+        # Process shifts and create display table
+        shifts_df, date_range = process_shifts_view(shifts_data, start_view_date, end_view_date, users_data)
         
-        # Initialize shifts for all dates for all users
-        for user_id in all_users:
-            all_users[user_id]['shifts'] = {date.date(): [] for date in date_range}
-        
-        # Process shifts data
-        for shift in shifts_data:
-            if 'user' in shift and shift['user']:
-                user_id = str(shift['user']['id'])
-                if user_id in all_users:
-                    try:
-                        # Parse shift times with timezone
-                        dtstart = shift['dtstart']
-                        dtend = shift['dtend']
-                        
-                        # Extract date and time, considering timezone
-                        shift_start = datetime.strptime(dtstart.split('+')[0], "%Y-%m-%dT%H:%M:%S")
-                        shift_end = datetime.strptime(dtend.split('+')[0], "%Y-%m-%dT%H:%M:%S")
-                        
-                        # Handle recurring shifts
-                        if 'rrule' in shift:
-                            rrule = shift['rrule']
-                            byday = rrule.get('byday', '').split(',')
-                            until = datetime.strptime(rrule['until'].split('+')[0], "%Y-%m-%dT%H:%M:%S")
-                            
-                            # Get all dates in the range that match the weekdays
-                            for date in date_range:
-                                # Convert date to weekday abbreviation
-                                weekday = date.strftime('%a').upper()[:2]
-                                if weekday in byday and date.date() <= until.date():
-                                    if date.date() in all_users[user_id]['shifts']:
-                                        all_users[user_id]['shifts'][date.date()].append("Night Shift")
-                        else:
-                            # Single shift
-                            current_date = shift_start.date()
-                            while current_date <= shift_end.date():
-                                if current_date in all_users[user_id]['shifts']:
-                                    all_users[user_id]['shifts'][current_date].append("Night Shift")
-                                current_date += timedelta(days=1)
-                        
-                    except Exception as e:
-                        st.error(f"Error processing shift: {str(e)}")
-        
-        # Create rows for all users
-        shift_rows = []
-        for user_id, user_data in all_users.items():
-            row = {'Employee': user_data['name']}
-            for date in date_range:
-                date_str = date.strftime("%Y-%m-%d")
-                shift_types = user_data['shifts'][date.date()]
-                row[date_str] = "✓" if shift_types else "❌"
-            shift_rows.append(row)
-        
-        shifts_df = pd.DataFrame(shift_rows)
-        
+        # Display legend
         st.markdown("#### Shift Legend:")
-        st.markdown("✓ = Scheduled Shift")
+        st.markdown("✅ = Scheduled Shift")
         st.markdown("❌ = No Shift")
         
+        # Display shifts table
         st.dataframe(
             shifts_df,
             hide_index=True,
@@ -240,24 +256,44 @@ def main():
     
     st.markdown("---") 
     
+    # Initialize session state variables if they don't exist
     if 'selected_employees' not in st.session_state:
         st.session_state.selected_employees = []
+    if 'shift_type_key' not in st.session_state:
+        st.session_state.shift_type_key = 0
+    if 'start_date_key' not in st.session_state:
+        st.session_state.start_date_key = 0
+    if 'interval_key' not in st.session_state:
+        st.session_state.interval_key = 0
+    if 'selected_employees_key' not in st.session_state:
+        st.session_state.selected_employees_key = 0
     
     st.write("### Create Shifts")
     
     # Add shift type selection
     shift_type = st.radio(
         "Select Shift Type",
-        ["10-hour", "12-hour"],
-        format_func=lambda x: "10-Hour Night Shift (10 PM - 8 AM PKT)" if x == "10-hour" else "12-Hour Night Shift (8 PM - 8 AM PKT)",
-        horizontal=True
+        ["8-hour", "10-hour", "12-hour"],
+        format_func=lambda x: "8-Hour Night Shift (8 PM - 4 AM PKT)" if x == "8-hour" 
+                            else "10-Hour Night Shift (10 PM - 8 AM PKT)" if x == "10-hour" 
+                            else "12-Hour Night Shift (8 PM - 8 AM PKT)",
+        horizontal=True,
+        key=f"shift_type_{st.session_state.shift_type_key}"
     )
     
     col1, col2 = st.columns(2)
     with col1:
-        start_date = st.date_input("Select Start Date", min_value=datetime.now().date())
+        start_date = st.date_input(
+            "Select Start Date", 
+            min_value=datetime.now().date(),
+            key=f"start_date_{st.session_state.start_date_key}"
+        )
     with col2:
-        interval = st.selectbox("Select Interval (weeks)", options=[1, 2, 3, 4])
+        interval = st.selectbox(
+            "Select Interval (weeks)", 
+            options=[1, 2, 3, 4],
+            key=f"interval_{st.session_state.interval_key}"
+        )
     
     response_data = fetch_users()
     
@@ -272,11 +308,11 @@ def main():
                 position != 'AI Engineer' and 
                 f"{user['legalName']} {user['lastname']}" != "Mukund Chopra"):
                 employee_data = {
-                    'id': user['id'],
-                    'full_name': f"{user['legalName']} {user['lastname']}",
-                    'position': position,
-                    'position_id': position_id,
-                    'display_name': f"{user['legalName']} {user['lastname']} ({position})"
+                        'id': user['id'],
+                        'full_name': f"{user['legalName']} {user['lastname']}",
+                        'position': position,
+                        'position_id': position_id,
+                        'display_name': f"{user['legalName']} {user['lastname']} ({position})"
                 }
                 all_employees.append(employee_data)
                 available_employees.append(employee_data)
@@ -288,7 +324,7 @@ def main():
             # Create the multiselect without any session state dependency
             if 'selected_employees_key' not in st.session_state:
                 st.session_state.selected_employees_key = 0
-
+            
             selected_names = st.multiselect(
                 "Select Employees for Shift Creation",
                 options=list(employee_options.keys()),
@@ -357,18 +393,18 @@ def main():
                     },
                     key="shift_selection_table"
                 )
-                
+
                 # Add a single Create Shifts button for all employees
                 if st.button("Create Shifts for All Selected Employees"):
                     message_container = st.empty()
                     progress_container = st.empty()
                     
                     with progress_container:
-                        progress_text = "Creating shifts for all employees..."
-                        progress_bar = st.progress(0)
-                        st.markdown(f"<p style='color: #666;'>{progress_text}</p>", unsafe_allow_html=True)
-                    
-                    total_employees = len(selected_names)
+                                progress_text = "Creating shifts for all employees..."
+                                progress_bar = st.progress(0)
+                                st.markdown(f"<p style='color: #666;'>{progress_text}</p>", unsafe_allow_html=True)
+                                
+                                total_employees = len(selected_names)
                     success_count = 0
                     messages = []
                     
@@ -389,7 +425,7 @@ def main():
                             if any(selected_days.values()):
                                 try:
                                     if create_shift(employee['id'], employee['position_id'], start_date, selected_days, interval, shift_type):
-                                        messages.append(("success", f"✅ {shift_type} shift created successfully for {employee['full_name']}"))
+                                        messages.append(("success", f"✅ Shift created successfully for {employee['full_name']}"))
                                         success_count += 1
                                 except Exception as e:
                                     messages.append(("error", f"❌ Error creating shift for {employee['full_name']}: {str(e)}"))
@@ -410,12 +446,14 @@ def main():
                                     st.error(msg)
                     
                     if success_count > 0:
-                        st.info(f"✨ Successfully created {shift_type} shifts for {success_count} out of {total_employees} employees")
-                        # Reset shift selections
+                        st.info(f"✨ Successfully created shifts for {success_count} out of {total_employees} employees")
+                        # Reset all session state variables
                         st.session_state.shift_selections = {}
-                        # Increment the key to force dropdown reset
+                        st.session_state.shift_type_key += 1
+                        st.session_state.start_date_key += 1
+                        st.session_state.interval_key += 1
                         st.session_state.selected_employees_key += 1
-                        # Clear the selection table key to force a reset
+                        # Clear the selection table key
                         if "shift_selection_table" in st.session_state:
                             del st.session_state["shift_selection_table"]
                         time.sleep(2)
