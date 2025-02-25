@@ -76,11 +76,17 @@ def create_shift(user_id, position_id, start_date, selected_days, interval, shif
         summary = "8-Hour Night Shift (8 PM - 4 AM PKT)"
         # For 8-hour shift, end time is on the same UTC day
         next_day = start_date
-    elif shift_type == "10-hour":
+    elif shift_type == "10-hour-late":
         # 10 PM PKT = 17:00 UTC
         shift_start = "17:00:00.000"  # 10 PM PKT
         shift_end = "03:00:00.000"    # 8 AM PKT next day
         summary = "10-Hour Night Shift (10 PM - 8 AM PKT)"
+        next_day = start_date + timedelta(days=1)
+    elif shift_type == "10-hour-early":
+        # 8 PM PKT = 15:00 UTC
+        shift_start = "15:00:00.000"  # 8 PM PKT
+        shift_end = "01:00:00.000"    # 6 AM PKT next day
+        summary = "10-Hour Night Shift (8 PM - 6 AM PKT)"
         next_day = start_date + timedelta(days=1)
     else:  # 12-hour
         # 8 PM PKT = 15:00 UTC
@@ -270,12 +276,13 @@ def main():
     
     st.write("### Create Shifts")
     
-    # Add shift type selection
+    # Add shift type selection with both 10-hour options
     shift_type = st.radio(
         "Select Shift Type",
-        ["8-hour", "10-hour", "12-hour"],
-        format_func=lambda x: "8-Hour Night Shift (8 PM - 4 AM PKT)" if x == "8-hour" 
-                            else "10-Hour Night Shift (10 PM - 8 AM PKT)" if x == "10-hour" 
+        ["8-hour", "10-hour-early", "10-hour-late", "12-hour"],
+        format_func=lambda x: "8-Hour Night Shift (8 PM - 4 AM PKT)" if x == "8-hour"
+                            else "10-Hour Night Shift (8 PM - 6 AM PKT)" if x == "10-hour-early"
+                            else "10-Hour Night Shift (10 PM - 8 AM PKT)" if x == "10-hour-late"
                             else "12-Hour Night Shift (8 PM - 8 AM PKT)",
         horizontal=True,
         key=f"shift_type_{st.session_state.shift_type_key}"
